@@ -1,3 +1,4 @@
+import os
 import dash
 from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
@@ -7,11 +8,19 @@ import joblib
 import io
 import base64
 from dash import dash_table
+import pickle
 
-# Load the saved model and preprocessors
-model = joblib.load('../artifacts/best_housing_model.pkl')
-scaler_X = joblib.load('../artifacts/scaler_X.pkl')
-training_columns = joblib.load('../artifacts/training_columns.pkl')
+BASE_DIR = os.path.dirname(__file__)
+ARTIFACTS_DIR = os.path.join(BASE_DIR, '..', 'artifacts')
+
+# Helper function to build file paths
+def get_artifact(filename):
+    return os.path.join(ARTIFACTS_DIR, filename)
+
+# # Load the saved model and preprocessors
+model = joblib.load(get_artifact('best_housing_model.pkl'))
+scaler_X = joblib.load(get_artifact('scaler_X.pkl'))
+training_columns = joblib.load(get_artifact('training_columns.pkl'))
 
 # Define unique cities and zipcodes (from notebook's EDA)
 cities = ['Seattle', 'Renton', 'Bellevue', 'Redmond', 'Kirkland', 'Issaquah', 'Kent', 
