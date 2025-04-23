@@ -7,4 +7,6 @@ tensorflow
 dash_bootstrap_components
 xgboost
 dash
+dash_table
+
 

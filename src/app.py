@@ -1,9 +1,12 @@
 import dash
-from dash import dcc, html, Input, Output, State
+from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 import pandas as pd
 import numpy as np
 import joblib
+import io
+import base64
+from dash import dash_table
 
 # Load the saved model and preprocessors
 model = joblib.load('../artifacts/best_housing_model.pkl')
@@ -108,108 +111,186 @@ app.layout = dbc.Container(fluid=True, className="py-5 bg-light", children=[
                         ], md=6)
                     ]),
                     dbc.Button("Predict", id="predict-button", color="primary", className="mt-4 w-100", n_clicks=0),
-                    html.Div(id="prediction-output", className="mt-4 text-center text-success fs-5")
-                ]),
-                className="shadow-sm p-4"
-            )
+                    html.Div(id="prediction-output", className="mt-4 text-center text-success fs-5"),
+                    html.Hr(),
+                    html.H4("Batch Prediction (CSV Upload)", className="mt-4"),
+                    dcc.Upload(
+                        id='upload-data',
+                        children=html.Div([
+                            'Drag and Drop or ',
+                            html.A('Select a CSV File')
+                        ]),
+                        style={
+                            'width': '100%',
+                            'height': '60px',
+                            'lineHeight': '60px',
+                            'borderWidth': '1px',
+                            'borderStyle': 'dashed',
+                            'borderRadius': '5px',
+                            'textAlign': 'center',
+                            'margin-bottom': '20px'
+                        },
+                        multiple=False
+                    ),
+                    html.Div(id='upload-output')
+                                    ]),
+                                    className="shadow-sm p-4"
+                                )
+            
         ], width=10, lg=8, xl=6, className="mx-auto")
+        
+        
     ])
+    
 ])
+
+def process_prediction(input_df, is_batch=False):
+    # Validation (only for single prediction)
+    if not is_batch:
+        errors = []
+        row = input_df.iloc[0]
+        if row['year_built'] < 1900 or row['year_built'] > 2014:
+            errors.append("Year built must be between 1900 and 2014.")
+        if row['bedrooms'] < 1:
+            errors.append("Bedrooms must be at least 1.")
+        if row['bathrooms'] < 0.5:
+            errors.append("Bathrooms must be at least 0.5.")
+        if row['sqft_living'] < 100:
+            errors.append("Living area must be at least 100 sqft.")
+        if row['floors'] < 1:
+            errors.append("Floors must be at least 1.")
+        if row['sqft_basement'] < 0:
+            errors.append("Invalid basement square footage.")
+        if row['condition'] not in [1, 2, 3, 4, 5]:
+            errors.append("Condition must be 1–5.")
+        if row['view'] not in [0, 1, 2, 3, 4]:
+            errors.append("View must be 0–4.")
+        if row['city'] not in cities:
+            errors.append("Invalid city.")
+        if row['zipcode'] not in zipcodes:
+            errors.append("Invalid zipcode.")
+        if errors:
+            return {"error": errors}
+
+    # Derived features
+    input_df['house_age'] = 2014 - input_df['year_built']
+    input_df['sqft_living_bathrooms'] = input_df['sqft_living'] * input_df['bathrooms']
+
+    # One-hot encode
+    input_df = pd.get_dummies(input_df, columns=['city', 'zipcode'], prefix=['city', 'zipcode'])
+    for col in training_columns:
+        if col not in input_df.columns:
+            input_df[col] = 0
+    input_df = input_df[training_columns]
+
+    # Scale
+    numerical_cols = ['bedrooms', 'bathrooms', 'sqft_living', 'floors', 'house_age',
+                      'condition', 'sqft_basement', 'sqft_living_bathrooms']
+    input_df[numerical_cols] = scaler_X.transform(input_df[numerical_cols])
+
+    # Predict
+    predictions = model.predict(input_df)
+    return predictions
 
 # Define the callback to predict price
 @app.callback(
     Output('prediction-output', 'children'),
     [Input('predict-button', 'n_clicks')],
     [State('bedrooms', 'value'),
-     State('bathrooms', 'value'),
-     State('sqft_living', 'value'),
-     State('floors', 'value'),
-     State('waterfront', 'value'),
-     State('view', 'value'),
-     State('year_built', 'value'),
-     State('is_renovated', 'value'),
-     State('condition', 'value'),
-     State('sqft_basement', 'value'),
-     State('city', 'value'),
-     State('zipcode', 'value')]
+    State('bathrooms', 'value'),
+    State('sqft_living', 'value'),
+    State('floors', 'value'),
+    State('waterfront', 'value'),
+    State('view', 'value'),
+    State('year_built', 'value'),
+    State('is_renovated', 'value'),
+    State('condition', 'value'),
+    State('sqft_basement', 'value'),
+    State('city', 'value'),
+    State('zipcode', 'value')],
 )
-def predict_price(n_clicks, bedrooms, bathrooms, sqft_living, floors, waterfront, view, 
-                  year_built, is_renovated, condition, sqft_basement, city, zipcode):
-    if n_clicks > 0:
-        # --- Validation Block ---
-        errors = []
 
-        if year_built is None or not (1900 <= year_built <= 2014):
-            errors.append("Year built must be between 1900 and 2014.")
+def single_predict(n_clicks, bedrooms, bathrooms, sqft_living, floors, waterfront, view,
+                   year_built, is_renovated, condition, sqft_basement, city, zipcode):
+    if n_clicks:
+        df = pd.DataFrame([{
+            'bedrooms': bedrooms,
+            'bathrooms': bathrooms,
+            'sqft_living': sqft_living,
+            'floors': floors,
+            'waterfront': waterfront,
+            'view': view,
+            'year_built': year_built,
+            'is_renovated': is_renovated,
+            'condition': condition,
+            'sqft_basement': sqft_basement,
+            'city': city,
+            'zipcode': zipcode
+        }])
+        result = process_prediction(df, is_batch=False)
+        if isinstance(result, dict) and 'error' in result:
+            return dbc.Alert("\n".join(result['error']), color="danger", dismissable=True)
+        return dbc.Alert(f"Predicted House Price: ${result[0]:,.2f}", color="success", dismissable=True)
+    return ""
 
-        if bedrooms is None or bedrooms < 1:
-            errors.append("Number of bedrooms must be at least 1.")
+    
+@app.callback(
+    Output('upload-output', 'children'),
+    Input('upload-data', 'contents'),
+    State('upload-data', 'filename')
+)
+def batch_predict(contents, filename):
+    if contents is None:
+        return ""
 
-        if bathrooms is None or bathrooms < 0.5:
-            errors.append("Number of bathrooms must be at least 0.5.")
+    try:
+        content_type, content_string = contents.split(',')
+        decoded = base64.b64decode(content_string)
+        df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
 
-        if sqft_living is None or sqft_living < 100:
-            errors.append("Living area must be at least 100 sqft.")
+        # Validate required columns
+        required_columns = ['bedrooms', 'bathrooms', 'sqft_living', 'floors', 'waterfront', 'view',
+                            'year_built', 'is_renovated', 'condition', 'sqft_basement',
+                            'city', 'zipcode']
+        missing = [col for col in required_columns if col not in df.columns]
+        if missing:
+            return dbc.Alert(f"Missing columns: {', '.join(missing)}", color="danger")
 
-        if floors is None or floors < 1:
-            errors.append("Number of floors must be at least 1.")
+        # Feature engineering
+        df['house_age'] = 2014 - df['year_built']
+        df['sqft_living_bathrooms'] = df['sqft_living'] * df['bathrooms']
+        df = pd.get_dummies(df, columns=['city', 'zipcode'], prefix=['city', 'zipcode'])
 
-        if sqft_basement is None:
-            errors.append("Basement square footage must be provided.")
-        elif sqft_basement < 0:
-            errors.append("Basement square footage cannot be negative.")
-
-        if condition is None or condition not in [1, 2, 3, 4, 5]:
-            errors.append("Condition must be between 1 and 5.")
-
-        if view is None or view not in [0, 1, 2, 3, 4]:
-            errors.append("View must be between 0 and 4.")
-
-        if city not in cities:
-            errors.append("Invalid city selected.")
-
-        if zipcode not in zipcodes:
-            errors.append("Invalid zipcode selected.")
-
-        if errors:
-            return dbc.Alert("\n".join(errors), color="danger", dismissable=True)
-        
-        # Create input DataFrame
-        input_data = pd.DataFrame({
-            'bedrooms': [bedrooms],
-            'bathrooms': [bathrooms],
-            'sqft_living': [sqft_living],
-            'floors': [floors],
-            'waterfront': [waterfront],
-            'view': [view],
-            'house_age': [2014 - year_built],
-            'is_renovated': [is_renovated],
-            'condition': [condition],
-            'sqft_basement': [sqft_basement],
-            'sqft_living_bathrooms': [sqft_living * bathrooms],
-            'city': [city],
-            'zipcode': [zipcode]
-        })
-
-        # One-hot encode categorical variables
-        input_data = pd.get_dummies(input_data, columns=['city', 'zipcode'], prefix=['city', 'zipcode'])
-
-        # Align with training columns
+        # Ensure same column order
         for col in training_columns:
-            if col not in input_data.columns:
-                input_data[col] = 0
-        input_data = input_data[training_columns]
+            if col not in df.columns:
+                df[col] = 0
+        df = df[training_columns]
 
         # Scale numerical features
-        numerical_cols = ['bedrooms', 'bathrooms', 'sqft_living', 'floors', 'house_age', 
-                         'condition', 'sqft_basement', 'sqft_living_bathrooms']
-        input_data[numerical_cols] = scaler_X.transform(input_data[numerical_cols])
+        numerical_cols = ['bedrooms', 'bathrooms', 'sqft_living', 'floors', 'house_age',
+                          'condition', 'sqft_basement', 'sqft_living_bathrooms']
+        df[numerical_cols] = scaler_X.transform(df[numerical_cols])
 
-        # Predict price
-        pred_price = model.predict(input_data)[0]
-        # return f"Predicted House Price: ${pred_price:,.2f}"
-        return dbc.Alert(f"Predicted House Price: ${pred_price:,.2f}", color="success", dismissable=True)
-    return ""
+        # Predict prices
+        predictions = model.predict(df)
+
+        # Format output
+        results_df = pd.DataFrame({
+            "Row": range(1, len(predictions) + 1),
+            "Predicted Price": [f"${format(pred, ',.2f')}" for pred in predictions]
+        })
+
+        return dash_table.DataTable(
+            data=results_df.to_dict("records"),
+            columns=[{"name": col, "id": col} for col in results_df.columns],
+            style_table={'overflowX': 'auto'},
+            style_cell={'textAlign': 'center'},
+            page_size=10
+        )
+
+    except Exception as e:
+        return dbc.Alert(f"Error processing file: {str(e)}", color="danger")
 
 # Run the app
 if __name__ == '__main__':
