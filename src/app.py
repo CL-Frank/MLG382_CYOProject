@@ -41,6 +41,7 @@ zipcodes = [98001, 98002, 98003, 98004, 98005, 98006, 98007, 98008, 98010, 98011
 
 # Initialize the Dash app
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+server = app.server
 
 app.layout = dbc.Container(fluid=True, className="py-5 bg-light", children=[
     dbc.Row([
@@ -302,5 +303,10 @@ def batch_predict(contents, filename):
         return dbc.Alert(f"Error processing file: {str(e)}", color="danger")
 
 # Run the app
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    print("Launching Dash app...")
+    try:
+        # app.run(debug=True, host='127.0.0.1', port=8050)
+        app.run(debug=True)
+    except Exception as e:
+        print("Failed to start server:", e)
